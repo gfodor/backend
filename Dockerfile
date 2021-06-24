@@ -17,16 +17,19 @@ WORKDIR /bitclout/src/backend
 RUN go mod download
 
 # include backend src
-COPY backend/config  config
-COPY backend/cmd     cmd
-COPY backend/miner   miner
-COPY backend/routes  routes
-COPY backend/main.go .
+COPY backend/config     config
+COPY backend/cmd        cmd
+COPY backend/dataloader dataloader
+COPY backend/graph      graph
+COPY backend/miner      miner
+COPY backend/routes     routes
+COPY backend/main.go    .
 
 # include core src
 COPY core/clouthash ../core/clouthash
 COPY core/cmd       ../core/cmd
 COPY core/lib       ../core/lib
+COPY core/migrate   ../core/migrate
 
 # build backend
 RUN GOOS=linux go build -mod=mod -a -installsuffix cgo -o bin/backend main.go

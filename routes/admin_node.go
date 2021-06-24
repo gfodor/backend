@@ -5,8 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/btcsuite/btcd/wire"
-	"github.com/gorilla/mux"
 	"io"
 	"io/ioutil"
 	"math"
@@ -16,6 +14,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/btcsuite/btcd/wire"
+	"github.com/gorilla/mux"
 
 	"github.com/bitclout/core/lib"
 	"github.com/btcsuite/btcd/btcec"
@@ -80,15 +81,12 @@ type NodeControlResponse struct {
 	// The current status the BitClout node is at in terms of syncing the BitClout
 	// chain.
 	BitCloutStatus *NodeStatusResponse
-	BitcoinStatus  *NodeStatusResponse
 
 	BitCloutOutboundPeers    []*PeerResponse
 	BitCloutInboundPeers     []*PeerResponse
 	BitCloutUnconnectedPeers []*PeerResponse
 
-	BitcoinSyncPeer         *PeerResponse
-	BitcoinUnconnectedPeers []*PeerResponse
-	BitcoinExchangeTxns     []*BitcoinExchangeResponseInfo `safeForLogging:"true"`
+	BitcoinExchangeTxns []*BitcoinExchangeResponseInfo `safeForLogging:"true"`
 
 	MinerPublicKeys []string
 }
@@ -117,16 +115,10 @@ func (fes *APIServer) _handleNodeControlGetInfo(
 	bitcloutChainState := fes.blockchain.ChainState()
 	bitcloutHeaderTip := fes.blockchain.HeaderTip()
 	bitcloutBlockTip := fes.blockchain.BlockTip()
-	isBitcoinChainCurrent := fes.backendServer.GetBitcoinManager().IsCurrent(false)
-	bitcoinHeaderTip := fes.backendServer.GetBitcoinManager().HeaderTip()
 
 	// Compute the fields for the BitClout NodeStatusResponse
 	bitcloutNodeStatus := &NodeStatusResponse{}
-	if !isBitcoinChainCurrent {
-		bitcloutNodeStatus.State = "SYNCING_BITCOIN"
-	} else {
-		bitcloutNodeStatus.State = bitcloutChainState.String()
-	}
+	bitcloutNodeStatus.State = bitcloutChainState.String()
 	// Main header chain fields
 	{
 		bitcloutNodeStatus.LatestHeaderHeight = bitcloutHeaderTip.Height
@@ -212,69 +204,6 @@ func (fes *APIServer) _handleNodeControlGetInfo(
 		})
 	}
 
-	// Compute the fields for the Bitcoin NodeStatusResponse
-	bitcoinNodeStatus := &NodeStatusResponse{}
-	if fes.backendServer.GetBitcoinManager().IsCurrent(true) {
-		bitcoinNodeStatus.State = "FULLY_CURRENT"
-	} else if fes.backendServer.GetBitcoinManager().IsCurrent(false) {
-		bitcoinNodeStatus.State = "TENTATIVELY_CURRENT"
-	} else {
-		bitcoinNodeStatus.State = "SYNCING"
-	}
-	// For the Bitcoin part of this we only set information on headers.
-	{
-		bitcoinNodeStatus.LatestHeaderHeight = bitcoinHeaderTip.Height
-		bitcoinNodeStatus.LatestHeaderHash = (chainhash.Hash)(*bitcoinHeaderTip.Hash).String()
-		bitcoinNodeStatus.LatestHeaderTstampSecs = uint32(bitcoinHeaderTip.Header.TstampSecs)
-	}
-	if !isBitcoinChainCurrent {
-		bitcoinNodeStatus.HeadersRemaining = uint32(
-			(time.Now().Unix() - int64(bitcoinNodeStatus.LatestHeaderTstampSecs)) /
-				int64(fes.Params.BitcoinTimeBetweenBlocks.Seconds()))
-	}
-	// Set the current Bitcoin sync peer.
-	var bitcoinSyncPeer *PeerResponse
-	bitcoinSyncConn := fes.backendServer.GetBitcoinManager().SyncConn()
-	if bitcoinSyncConn != nil {
-		// This is annoying but for the sync peer we need to split the IP from the port
-		// because all we have is RemoteAddr which is a string. RemoteAddr is always
-		// <IP>:<port> and so the last element after the colon when we Split() the
-		// RemoteAddr is the port.
-		ip, port := parseIPAndPort(bitcoinSyncConn.RemoteAddr().String())
-
-		bitcoinSyncPeer = &PeerResponse{
-			IP:           ip,
-			ProtocolPort: port,
-			IsSyncPeer:   true,
-		}
-	}
-	// Get some alternative peers from the Bitcoin addrmgr
-	bitcoinUnconnectedPeers := []*PeerResponse{}
-	bitcoinAddrs := fes.backendServer.GetBitcoinManager().GetAddrManager().AddressCache()
-	sort.Slice(bitcoinAddrs, func(ii, jj int) bool {
-		// Use a hash to get a deterministic but random order.
-		hashI := string(lib.Sha256DoubleHash([]byte(bitcoinAddrs[ii].IP.String() + fmt.Sprintf(":%d", bitcoinAddrs[ii].Port)))[:])
-		hashJ := string(lib.Sha256DoubleHash([]byte(bitcoinAddrs[jj].IP.String() + fmt.Sprintf(":%d", bitcoinAddrs[jj].Port)))[:])
-		return hashI < hashJ
-	})
-	for _, netAddr := range bitcoinAddrs {
-		// Only IPV4 addresses are currently supported for Bitcoin.
-		if netAddr.IP.To4() == nil {
-			continue
-		}
-		if len(bitcoinUnconnectedPeers) >= 250 {
-			break
-		}
-		if bitcoinSyncPeer != nil && bitcoinSyncPeer.IP == netAddr.IP.String() {
-			continue
-		}
-		bitcoinUnconnectedPeers = append(bitcoinUnconnectedPeers, &PeerResponse{
-			IP:           netAddr.IP.String(),
-			ProtocolPort: netAddr.Port,
-			// This is not a sync peer by definition.
-		})
-	}
-
 	// Encode the miner public keys as strings.
 	minerPublicKeyStrs := []string{}
 	for _, publicKey := range fes.backendServer.GetMiner().PublicKeys {
@@ -307,15 +236,12 @@ func (fes *APIServer) _handleNodeControlGetInfo(
 
 	res := NodeControlResponse{
 		BitCloutStatus: bitcloutNodeStatus,
-		BitcoinStatus:  bitcoinNodeStatus,
 
 		BitCloutOutboundPeers:    bitcloutOutboundPeers,
 		BitCloutInboundPeers:     bitcloutInboundPeers,
 		BitCloutUnconnectedPeers: bitcloutUnconnectedPeers,
 
-		BitcoinSyncPeer:         bitcoinSyncPeer,
-		BitcoinUnconnectedPeers: bitcoinUnconnectedPeers,
-		BitcoinExchangeTxns:     bitcoinExchangeTxns,
+		BitcoinExchangeTxns: bitcoinExchangeTxns,
 
 		MinerPublicKeys: minerPublicKeyStrs,
 	}
