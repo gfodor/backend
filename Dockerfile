@@ -20,6 +20,7 @@ RUN go mod download
 COPY backend/config     config
 COPY backend/cmd        cmd
 COPY backend/dataloader dataloader
+COPY backend/globaldb   globaldb
 COPY backend/graph      graph
 COPY backend/miner      miner
 COPY backend/routes     routes
