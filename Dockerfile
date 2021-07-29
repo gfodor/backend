@@ -22,6 +22,7 @@ COPY backend/cmd        cmd
 COPY backend/dataloader dataloader
 COPY backend/globaldb   globaldb
 COPY backend/graph      graph
+COPY backend/migrate    migrate
 COPY backend/miner      miner
 COPY backend/routes     routes
 COPY backend/main.go    .
